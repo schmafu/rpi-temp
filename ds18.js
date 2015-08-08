@@ -7,9 +7,12 @@
 
 var config = require('./config.js');
 var fs = require('fs');
-var MongoClient = require('mongodb').MongoClient;
 var assert = require('assert');
 var Promise = require('promise');
+var AWS = require('aws-sdk');
+var db = new AWS.DynamoDB({signatureVersion: 'v4', region: 'eu-central-1'});
+
+
 
 // read the temperature from ds18b20-file and return a date/celsius-object
 var readTemperature = new Promise(function (resolve, reject) {
@@ -19,8 +22,8 @@ var readTemperature = new Promise(function (resolve, reject) {
             // we expect YES at the end of the first line
             if(data.search("YES") > 1) {
                 console.log("readTemp");
-                resolve({
-                    "date": Date.now(),
+                resolve({ //unix timestamp + 1/1000 degree celsius
+                    "date": parseInt(Math.round(Date.now()/1000),10).toString(),
                     // for generating dummy-data: "celsius": (parseInt(data.split("t=")[1], 10) + parseInt(Math.random() * 2000))
                     "celsius": data.split("t=")[1]
                 });
@@ -28,36 +31,33 @@ var readTemperature = new Promise(function (resolve, reject) {
         });
     });
 
-// connect to the mongodb and return the connection
-var connectDB = new Promise(function(resolve, reject) {
-    MongoClient.connect(config.mongo, function(err, db) {
-        //assert.equal(null, err);
-        if(err) {
-            resolve(err);
-            return;
-        }
-        //console.log("DEBUG: Connected correctly to server.");
-        resolve(db);
-    });
-});
 
 
-// data+dbconnection ok? insertdata!
-Promise.all([readTemperature,connectDB]).then(function(data) {
+readTemperature.then(function(err,data) {
     "use strict";
-    var db = data[1];
-    var temp = data[0];
-    db.collection('temperature').insertOne(temp,function(err, result) {
-        assert.equal(null,err);
-        // console.log("DEBUG: insert successful");
-        db.close();
+    if(err) reject(err);
+    console.log("DEBUG: date/celsius: " + data.date + "/" + data.celsius);
+    var dbparams = {
+        Item: {
+            timestamp: {S: data.date },
+            celsius: {N: data.celsius}
+        },
+        TableName: "rpi-temp"
+    };
+    db.putItem(dbparams, function(err, data) {
+        if (err) console.log(err, err.stack); // an error occurred
+        else     console.log(data);           // successful response
     });
-    // console.log("DEBUG: date/celsius: " + temp.date + "/" + temp.celsius);
+
 
 }).catch(function(e) {
     "use strict";
     console.log("Error: " + e.message());
 });
+
+
+
+
 
 
 
